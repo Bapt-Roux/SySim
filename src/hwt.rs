@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use once_cell::sync::OnceCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::HashMap;
 use std::sync::mpsc::sync_channel;
 
 
@@ -67,11 +68,42 @@ impl<'p> Future for HwFuture<'p> {
 
 
 #[derive(Debug)]
+pub struct HwTask {
+    name: String,
+    period: usize,
+}
+
+impl HwTask
+{
+    fn new(n: &str, p: usize) -> Self {
+        HwTask{
+            name: String::from(n),
+            period: p,
+        }
+    }
+
+    async fn run(self: &mut Self) -> ()
+    {
+        let mut done = false;
+        while !done {
+            println!("I'm a {} cycles period hw task", self.period);
+            HwFuture::new(&self.name, WaitKind::Time(self.period)).await;
+        }
+        panic!("This stmt shouldn't be reach");
+    }
+}
+
+#[derive(Debug)]
 pub struct TickKeeper {
     /// Current simulated cycle
     tick: AtomicUsize,
+    end_tick: usize,
+
     /// Number of tick per second
     timescale: usize,
+
+    // HashMap to store the HwTask
+    tasks: HashMap<String, HwTask>,
 }
 static TICK_KEEPER: OnceCell<TickKeeper> = OnceCell::new();
 
@@ -93,16 +125,31 @@ impl TickKeeper {
         TICK_KEEPER.get().expect("TickKeeper is not initialized")
     }
 
-}
+    pub fn register_hwt(self: &mut Self, n:&str, hwt: HwTask) -> (){
+        self.tasks.insert(String::from(n), hwt);
+    }
 
-pub fn register(tk: TickKeeper) -> () 
-{
-    TICK_KEEPER.set(tk).unwrap();
-}
+    pub fn simulate(self: &mut Self, end: usize) -> (){
+        self.end_tick = end;
+
+        // Rearm associated HwTasks
+        for (key, value) in &*self.tasks {
+            println!("Start {}", key);
+            value.init();
+        }
+    }
+
+    pub fn update_tick(self: &mut Self) -> () {
+
+    }
+
+    pub fn cur_tick() -> usize {
+        let tk = TickKeeper::global();
+        tk.tick.load(Ordering::Relaxed)
+    }
 
 
-pub fn cur_tick() -> usize
-{
-    let tk = TickKeeper::global();
-    tk.tick.load(Ordering::Relaxed)
+    pub fn register(tk: TickKeeper) -> () {
+        TICK_KEEPER.set(tk).unwrap();
+    }
 }

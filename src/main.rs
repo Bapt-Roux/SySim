@@ -30,6 +30,12 @@ async fn main() {
     hwt::register(tk);
     // use `TickKeeper::global()` from now on
 
-    let fut = hwt::HwFuture::new("main", hwt::WaitKind::Time(4));
-    fut.await;
+    // Register two tasks
+    let p10 = hwt::HwTask("p10", 10);
+    TickKeeper::global().register_hwt("p10", p10);
+    let p20 = hwt::HwTask("p20", 20);
+    TickKeeper::global().register_hwt("p20", p20);
+
+    // Start simulation loop for 400 cycles
+    TickKeeper::global().simulate(400);
 }
