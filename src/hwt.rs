@@ -1,74 +1,173 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Waker};
 use once_cell::sync::OnceCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::collections::HashMap;
-use std::sync::mpsc::sync_channel;
+use std::sync::mpsc::{Receiver,Sender};
 
-
-// Implement the Tick Keeper struct
-// Handle the simulation time and expose a simulate functtion
-// Warn: This struct is instanciated once and made global with once_cell
+// WaitKind -------------------------------------------------------------------
+/// WaitKind define the wait type use for the current job
 #[derive(Debug)]
-pub struct TickKeeper {
-    /// Current simulated cycle
-    tick: AtomicUsize,
-
-    /// Number of tick per second
-    timescale: usize,
-
-    // Communication HwTask and counter for number of inflight task
-    nb_hwt: u64,
-    pdg_hwt: u64,
-    rx: Receiver<(usize, &Waker)>, // todo
+pub enum WaitKind {
+    Time(usize),
+    Event(String),
 }
-static TICK_KEEPER: OnceCell<TickKeeper> = OnceCell::new();
 
-impl TickKeeper {
-    /// Constructs a new `TickKeeper`.
+// HwJob ----------------------------------------------------------------------
+/// HwJob: Structure use to pass wakeup information to the HwScheduler
+#[derive(Debug)]
+pub struct HwJob {
+    wait_evt: WaitKind,
+    waker: Waker,
+}
+
+// HwScheduler ----------------------------------------------------------------
+/// HwScheduler: Implement a async task that handle the simulated time update 
+/// and the inter-task events.
+/// Warn: This struct is instanciated once and made global with once_cell
+#[derive(Debug)]
+pub struct HwScheduler {
+    tick: AtomicUsize,
+    timescale: usize,
+    hwRx: Receiver<HwJob>,
+    inflight_hwt: AtomicUsize,
+    pending_hwt: Vec<HwJob>,
+    waker: Option<Waker>,
+}
+static TICK_KEEPER: OnceCell<HwScheduler> = OnceCell::new();
+
+impl HwScheduler {
+    /// Constructs a new `HwScheduler`.
     ///
     /// `cur_tick` Start from the given tick
     /// `timescale` Used time resolution
     ///
-    pub fn new(cur_tick: usize, timescale: usize) -> Self {
-        println!("Create a new TimeKeeper @{}[{}]", cur_tick, timescale);
-        TickKeeper {
+    pub fn new(cur_tick: usize, timescale: usize, rx: Receiver<HwJob>) -> Self {
+        println!("Create a new HwScheduler @{}[{}]", cur_tick, timescale);
+        HwScheduler {
             tick: AtomicUsize::new(cur_tick),
             timescale: timescale,
+            hwRx: rx,
+            inflight_hwt: AtomicUsize::new(0),
+            pending_hwt: Vec::new(),
+            waker: None(),
         }
     }
 
-    pub fn global() -> &'static TickKeeper {
-        TICK_KEEPER.get().expect("TickKeeper is not initialized")
+    pub fn register(self: Self) -> () {
+        TICK_KEEPER.set(self).unwrap();
     }
 
-    pub fn register_hwt(self: &mut Self, n:&str, hwt: HwTask) -> (){
-        self.tasks.insert(String::from(n), hwt);
+    pub fn global() -> &'static HwScheduler {
+        TICK_KEEPER.get().expect("HwScheduler is not initialized")
     }
 
-    pub fn simulate(self: &mut Self, end: usize) -> (){
-        self.end_tick = end;
+    pub fn simulate(self: &mut Self, duration: usize) -> () {
+        println!("Start simulation loop for {} tick", duration);
 
-        // Rearm associated HwTasks
-        for (key, value) in &*self.tasks {
-            println!("Start {}", key);
-            value.init();
+        loop {
+            todo!();
+            // Read message from mpsc
+            // get next tick
+            // if next tick >= duration break
+            // => break;
+            // else update tick and wake required tasks
+        };
+    }
+
+    /// Generate the given event id at tick
+    pub fn notify(self: &mut Self, name: String, tick: usize) -> () {
+        println!(" Event {} fired, notify associated HwTasks", name);
+        todo!();
+    }
+}
+
+/// Global scope function to retrieved some scheduler informations
+pub fn cur_tick() -> usize {
+    let tk = HwScheduler::global();
+    tk.tick.load(Ordering::SeqCst)
+}
+
+// HwTask ---------------------------------------------------------------------
+/// HwTask: Implement a async task that represent Hw component execution loop
+/// In practice this should be a trait implemented by multiple component structures
+///
+#[derive(Debug)]
+struct HwTask {
+    name: String,
+    kind: WaitKind,
+    hw_tx: Sender<HwJob>,
+}
+
+impl HwTask {
+    pub fn new(name: String, kind: WaitKind, tx: Sender<HwJob>) -> Self {
+        println!("{}: Create HwTask {}[{:?}]", cur_tick(), name, kind);
+
+        HwTask {
+            name: name,
+            kind: kind,
+            hw_tx: tx,
         }
     }
 
-    pub fn update_tick(self: &mut Self) -> () {
+    async fn run(self: &mut Self) -> () {
+        loop {
+            HwFuture::new(self, self.kind).await;
+            println!("{}: Execute HwTask {}[{:?}]", cur_tick(), self.name, self.kind);
+        }
+    }
+}
 
+// HwFuture ------------------------------------------------------------------
+/// Implement a future that registered itself in the HwScheduler for waking up
+/// bypass the standard tokio wakeup mechanisms for Hw simulation purpose
+///
+pub struct HwFuture<'p> {
+    parent: &'p HwTask,
+    kind: WaitKind,
+}
+
+impl<'p> HwFuture<'p> {
+    pub fn new(parent: &'p mut HwTask, kind: WaitKind) -> Self {
+        HwFuture {
+            parent: parent,
+            kind: kind,
+        }
     }
 
-    pub fn cur_tick() -> usize {
-        let tk = TickKeeper::global();
-        tk.tick.load(Ordering::Relaxed)
+    async fn wait_for(tick: usize) -> () {
+        todo!()
     }
 
+    async fn wait_event(name: &str) -> () {
+        todo!()
+    }
+}
 
-    pub fn register(tk: TickKeeper) -> () {
-        TICK_KEEPER.set(tk).unwrap();
+impl<'p> Future for HwFuture<'p> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>)
+        -> Poll<()>
+    {
+        println!("HwFuture polled");
+
+        match self.kind {
+            WaitKind::Time(t) => {
+                // Ready path
+                if cur_tick() >= t {
+                    Poll::Ready(())
+                } else {
+                    self.parent.tx.send(cx.waker());
+                    // cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            },
+            WaitKind::Event(n) => {
+                todo!();
+            },
+            _ => { panic!("Unknown kind"); }
+        }
     }
 }

@@ -26,11 +26,12 @@ async fn main() {
     let opt = Opt::from_args();
     println!("User Options:\n {:?}", opt);
 
-    // Create and register the global TickKeeper
-    let tk = hwt::TickKeeper::new(opt.tick, opt.timescale);
+    // Create and register the global HwScheduler
+    let tk = hwt::HwScheduler::new(opt.tick, opt.timescale);
     hwt::register(tk);
 
-    // Register tasks with random period
+    // Create HwTasks with random period, register them in the scheduler and 
+    // spawned them on tokio runtime
     // let mut rng = rand::thread_rng();
     // let tasks: Vec<hwt::HwTask>;
     // for t in 0..opt.coworker {
@@ -40,5 +41,5 @@ async fn main() {
     // }
 
     // Start simulation loop for 400 cycles
-    // TickKeeper::global().simulate(400);
+    // HwScheduler::global().simulate(400);
 }
