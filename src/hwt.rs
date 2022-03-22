@@ -29,12 +29,12 @@ pub struct HwJob {
 /// Enable every HwTask to access global simulation time and update the number of infligth tasks
 /// Warn: This struct is instanciated once and made global with once_cell
 pub struct TickKeeper {
-    tick: AtomicUsize,
+    pub tick: AtomicUsize,
     timescale: usize,
-    inflight_hwt: AtomicUsize,
+    pub inflight_hwt: AtomicUsize,
     scheduler_waker: AtomicCell<Option<Waker>>,
 }
-static TICK_KEEPER: OnceCell<TickKeeper> = OnceCell::new();
+pub static TICK_KEEPER: OnceCell<TickKeeper> = OnceCell::new();
 
 impl TickKeeper {
     /// Constructs a new `HwScheduler`.
@@ -60,9 +60,6 @@ impl TickKeeper {
         TICK_KEEPER.get().expect("HwScheduler is not initialized")
     }
 
-    // pub fn global_mut() -> &'static mut TickKeeper {
-    //     TICK_KEEPER.get_mut().expect("HwScheduler is not initialized")
-    // }
     pub fn register_waker(waker: Waker) -> () {
         let waker_cell = &TICK_KEEPER.get().unwrap().scheduler_waker;
         waker_cell.store(Some(waker));
@@ -108,10 +105,14 @@ impl HwScheduler {
     }
 
     pub async fn simulate(self: &mut Self, duration: usize) -> () {
-        println!("Start simulation loop for {} tick", duration);
+        println!("{}: Start simulation loop for {} tick", cur_tick(), duration);
 
-        let mut hw_task = 0;
+        let mut hw_task = TickKeeper::global().inflight_hwt.load(Ordering::SeqCst);
         loop {
+            // Wait for inflight hw task to complete
+            HwSchedFuture{}.await;
+
+            println!("{}: Get messages from {} tasks", cur_tick(), hw_task);
             // Retrieved jobs from previous inflight task
             for i in 0..hw_task {
                 let job = self.hw_rx.recv().unwrap();
@@ -160,7 +161,6 @@ impl HwScheduler {
 
             // Update the tick and wait for the next simulation period
             TickKeeper::global().tick.store(next_tick, Ordering::SeqCst);
-            HwSchedFuture{}.await;
         };
     }
 
@@ -205,9 +205,13 @@ pub struct HwTask {
 
 impl HwTask {
     pub fn new(name: String, kind: WaitKind, tx: Sender<HwJob>) -> Self {
-        println!("{}: Create HwTask {}[{:?}]", cur_tick(), name, kind);
         // Considered the task as inflight at the beginning
-        TickKeeper::global().inflight_hwt.fetch_add(1, Ordering::SeqCst);
+        let br = TickKeeper::global().inflight_hwt.load(Ordering::SeqCst);
+        let inflight = TickKeeper::global().inflight_hwt.fetch_add(1, Ordering::SeqCst);
+        let rb = TickKeeper::global().inflight_hwt.load(Ordering::SeqCst);
+
+        println!("{}: Debug inflight counter@{:p} {}::{}::{}", cur_tick(), &TickKeeper::global().inflight_hwt, br, inflight, rb);
+        println!("{}: Create HwTask {}[{:?}] => inflight {}", cur_tick(), name, kind, inflight);
 
         HwTask {
             name: name,
@@ -270,10 +274,10 @@ impl<'p> Future for HwFuture<'p> {
                     // Send the job and update inflight cnt
                     self.parent.hw_tx.send(job).unwrap();
                     let remaining_hwt = TickKeeper::global().inflight_hwt.fetch_sub(1, Ordering::SeqCst);
+                    // println!("",);
                     if 0 == remaining_hwt {
                         TickKeeper::global().scheduler_waker.take().unwrap().wake_by_ref();
                     }
-                    // cx.waker().wake_by_ref();
                     Poll::Pending
                 }
             },

@@ -3,6 +3,8 @@ use futures::future::join_all;
 use std::sync::mpsc::channel;
 use structopt::StructOpt;
 use tokio::task;
+use debugless_unwrap::DebuglessUnwrap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub mod hwt;
 
@@ -22,6 +24,9 @@ struct Opt {
     #[structopt(long)]
     timescale: usize,
 }
+
+// Global simulation state
+// static TICK_KEEPER: OnceCell<TickKeeper> = OnceCell::new();
 
 #[tokio::main(worker_threads = 1)]
 async fn main() {
@@ -52,6 +57,7 @@ async fn main() {
                         task.run().await;
                         }));
         }
+
         // Join all task futures
         join_all(task_fut).await;
     });
