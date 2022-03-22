@@ -107,7 +107,7 @@ impl HwScheduler {
         }
     }
 
-    pub fn simulate(self: &mut Self, duration: usize) -> () {
+    pub async fn simulate(self: &mut Self, duration: usize) -> () {
         println!("Start simulation loop for {} tick", duration);
 
         let mut hw_task = 0;
@@ -146,8 +146,10 @@ impl HwScheduler {
                 let job = self.pending_hwt.first().unwrap();
                 match job {
                     HwJob {wait_evt: WaitKind::Time(t), waker: w} => {
-                        // increase the inflight number and wake the task
+                        // increase the inflight number and local counter
                         TickKeeper::global().inflight_hwt.fetch_add(1, Ordering::SeqCst);
+                        hw_task+=1;
+                        // wake the task
                         w.wake_by_ref();
                     },
                     HwJob {wait_evt: WaitKind::Event((n,t)), waker: w} => {
@@ -158,6 +160,7 @@ impl HwScheduler {
 
             // Update the tick and wait for the next simulation period
             TickKeeper::global().tick.store(next_tick, Ordering::SeqCst);
+            HwSchedFuture{}.await;
         };
     }
 
@@ -203,6 +206,8 @@ pub struct HwTask {
 impl HwTask {
     pub fn new(name: String, kind: WaitKind, tx: Sender<HwJob>) -> Self {
         println!("{}: Create HwTask {}[{:?}]", cur_tick(), name, kind);
+        // Considered the task as inflight at the beginning
+        TickKeeper::global().inflight_hwt.fetch_add(1, Ordering::SeqCst);
 
         HwTask {
             name: name,
@@ -211,7 +216,7 @@ impl HwTask {
         }
     }
 
-    async fn run(self: &mut Self) -> () {
+    pub async fn run(self: &mut Self) -> () {
         loop {
             HwFuture::new(self).await;
             println!("{}: Execute HwTask {}[{:?}]", cur_tick(), self.name, self.kind);
@@ -249,7 +254,7 @@ impl<'p> Future for HwFuture<'p> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>)
         -> Poll<()>
     {
-        println!("HwFuture polled");
+        println!("{}: HwFuture polled", cur_tick());
 
         let ltick = cur_tick();
         match &self.parent.kind {
@@ -262,7 +267,12 @@ impl<'p> Future for HwFuture<'p> {
                         wait_evt: WaitKind::Time(*t),
                         waker: cx.waker().clone(),
                     };
+                    // Send the job and update inflight cnt
                     self.parent.hw_tx.send(job).unwrap();
+                    let remaining_hwt = TickKeeper::global().inflight_hwt.fetch_sub(1, Ordering::SeqCst);
+                    if 0 == remaining_hwt {
+                        TickKeeper::global().scheduler_waker.take().unwrap().wake_by_ref();
+                    }
                     // cx.waker().wake_by_ref();
                     Poll::Pending
                 }
