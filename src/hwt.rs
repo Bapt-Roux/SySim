@@ -17,9 +17,9 @@ pub enum WaitKind {
 // HwJob ----------------------------------------------------------------------
 /// HwJob: Structure use to pass wakeup information to the HwScheduler
 #[derive(Debug)]
-pub struct HwJob {
+pub struct HwJob<'a> {
     wait_evt: WaitKind,
-    waker: Waker,
+    waker: &'a Waker,
 }
 
 // HwScheduler ----------------------------------------------------------------
@@ -27,17 +27,17 @@ pub struct HwJob {
 /// and the inter-task events.
 /// Warn: This struct is instanciated once and made global with once_cell
 #[derive(Debug)]
-pub struct HwScheduler {
+pub struct HwScheduler<'a> {
     tick: AtomicUsize,
     timescale: usize,
-    hwRx: Receiver<HwJob>,
+    hwRx: Receiver<HwJob<'a>>,
     inflight_hwt: AtomicUsize,
-    pending_hwt: Vec<HwJob>,
+    pending_hwt: Vec<HwJob<'a>>,
     waker: Option<Waker>,
 }
 static TICK_KEEPER: OnceCell<HwScheduler> = OnceCell::new();
 
-impl HwScheduler {
+impl<'a> HwScheduler<'a> {
     /// Constructs a new `HwScheduler`.
     ///
     /// `cur_tick` Start from the given tick
@@ -51,7 +51,7 @@ impl HwScheduler {
             hwRx: rx,
             inflight_hwt: AtomicUsize::new(0),
             pending_hwt: Vec::new(),
-            waker: None(),
+            waker: None,
         }
     }
 
@@ -59,7 +59,7 @@ impl HwScheduler {
         TICK_KEEPER.set(self).unwrap();
     }
 
-    pub fn global() -> &'static HwScheduler {
+    pub fn global() -> &'static HwScheduler<'a> {
         TICK_KEEPER.get().expect("HwScheduler is not initialized")
     }
 
@@ -94,13 +94,13 @@ pub fn cur_tick() -> usize {
 /// In practice this should be a trait implemented by multiple component structures
 ///
 #[derive(Debug)]
-struct HwTask {
+pub struct HwTask<'a> {
     name: String,
     kind: WaitKind,
-    hw_tx: Sender<HwJob>,
+    hw_tx: Sender<HwJob<'a>>,
 }
 
-impl HwTask {
+impl<'a> HwTask<'a> {
     pub fn new(name: String, kind: WaitKind, tx: Sender<HwJob>) -> Self {
         println!("{}: Create HwTask {}[{:?}]", cur_tick(), name, kind);
 
@@ -113,7 +113,7 @@ impl HwTask {
 
     async fn run(self: &mut Self) -> () {
         loop {
-            HwFuture::new(self, self.kind).await;
+            HwFuture::new(self).await;
             println!("{}: Execute HwTask {}[{:?}]", cur_tick(), self.name, self.kind);
         }
     }
@@ -124,15 +124,13 @@ impl HwTask {
 /// bypass the standard tokio wakeup mechanisms for Hw simulation purpose
 ///
 pub struct HwFuture<'p> {
-    parent: &'p HwTask,
-    kind: WaitKind,
+    parent: &'p HwTask<'p>,
 }
 
 impl<'p> HwFuture<'p> {
-    pub fn new(parent: &'p mut HwTask, kind: WaitKind) -> Self {
+    pub fn new(parent: &'p mut HwTask) -> Self {
         HwFuture {
             parent: parent,
-            kind: kind,
         }
     }
 
@@ -153,13 +151,18 @@ impl<'p> Future for HwFuture<'p> {
     {
         println!("HwFuture polled");
 
-        match self.kind {
+        let ltick = cur_tick();
+        match self.parent.kind {
             WaitKind::Time(t) => {
                 // Ready path
-                if cur_tick() >= t {
+                if ltick >= t {
                     Poll::Ready(())
                 } else {
-                    self.parent.tx.send(cx.waker());
+                    let job = HwJob {
+                        wait_evt: WaitKind::Time(t),
+                        waker: cx.waker()
+                    };
+                    self.parent.hw_tx.send(job);
                     // cx.waker().wake_by_ref();
                     Poll::Pending
                 }

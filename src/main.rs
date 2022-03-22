@@ -1,4 +1,5 @@
 
+use std::sync::mpsc::channel;
 use structopt::StructOpt;
 use rand::Rng;
 
@@ -27,19 +28,19 @@ async fn main() {
     println!("User Options:\n {:?}", opt);
 
     // Create and register the global HwScheduler
-    let tk = hwt::HwScheduler::new(opt.tick, opt.timescale);
-    hwt::register(tk);
+    let (rx, tx) = channel();
+    hwt::HwScheduler::new(opt.tick, opt.timescale, rx).register();
 
     // Create HwTasks with random period, register them in the scheduler and 
     // spawned them on tokio runtime
-    // let mut rng = rand::thread_rng();
-    // let tasks: Vec<hwt::HwTask>;
-    // for t in 0..opt.coworker {
-    //     let p = rng.gen_range(1..200);
-    //     tasks.push(hwt::HwTask(format!("HwTask_P{}", p), p));
-    //     tk.add_hwt();
-    // }
+    let mut rng = rand::thread_rng();
+    let tasks: Vec<hwt::HwTask>;
+    for t in 0..opt.coworker {
+        let p = rng.gen_range(1..200);
+        let tx = tx.clone();
+        tasks.push(hwt::HwTask::new(format!("HwTask_P{}", hwt::WaitKind::Tick(p)), tx));
+    }
 
     // Start simulation loop for 400 cycles
-    // HwScheduler::global().simulate(400);
+    HwScheduler::global().simulate(400);
 }
