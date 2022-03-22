@@ -20,6 +20,10 @@ struct Opt {
     #[structopt(long)]
     tick: usize,
 
+    /// Simulation duration
+    #[structopt(long)]
+    duration: usize,
+
     /// Number of tick per second (resolution)
     #[structopt(long)]
     timescale: usize,
@@ -40,7 +44,7 @@ async fn main() {
     let (tx, rx) = channel();
     let mut scheduler = hwt::HwScheduler::new(rx);
     // Configure a simulation loop for 400 cycles
-    let sched_fut = scheduler.simulate(400);
+    let sched_fut = scheduler.simulate(opt.duration, opt.coworker as usize);
 
     // Circumvent Send issue with local task set and spawn local
     let local = task::LocalSet::new();

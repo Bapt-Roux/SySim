@@ -98,16 +98,21 @@ impl HwScheduler {
     }
 
     fn get_next_tick(self: &Self) -> usize {
-        match &self.pending_hwt[0].wait_evt {
-            WaitKind::Time(t) => { *t },
-            WaitKind::Event((n,t)) => { *t },
+        if let Some(job) = self.pending_hwt.last() {
+            match &job.wait_evt {
+                WaitKind::Time(t) => { *t },
+                WaitKind::Event((n,t)) => { *t },
+            }
+        } else {
+            usize::MAX
         }
     }
 
-    pub async fn simulate(self: &mut Self, duration: usize) -> () {
+    pub async fn simulate(self: &mut Self, duration: usize, nb_task: usize) -> () {
         println!("{}: Start simulation loop for {} tick", cur_tick(), duration);
 
-        let mut hw_task = TickKeeper::global().inflight_hwt.load(Ordering::SeqCst);
+        // Wait for task to register in the Scheduler after init
+        let mut hw_task = nb_task;
         loop {
             // Wait for inflight hw task to complete
             HwSchedFuture{}.await;
@@ -118,6 +123,7 @@ impl HwScheduler {
                 let job = self.hw_rx.recv().unwrap();
                 self.pending_hwt.push(job);
             }
+
             // Ordered job vector
             self.pending_hwt.sort_by(|a, b| {
                 let tick_a = match &a.wait_evt {
@@ -130,7 +136,8 @@ impl HwScheduler {
                     WaitKind::Event((n,t)) => { t },
                 };
 
-                tick_a.cmp(&tick_b)
+                // sort in reverse order
+                tick_b.cmp(&tick_a)
             });
 
             if 0 == self.pending_hwt.len() {
@@ -138,13 +145,15 @@ impl HwScheduler {
             }
             let next_tick = self.get_next_tick();
             if next_tick > duration {
+                panic!("Ugliest end of simulation but intended behavior");
                 break;
             }
 
             // Loop over event that are below the next_tick
-            while next_tick < self.get_next_tick() {                // Check loop condition
+            hw_task = 0;
+            while next_tick >= self.get_next_tick() {                // Check loop condition
                 // Pop the job and process accordingly
-                let job = self.pending_hwt.first().unwrap();
+                let job = self.pending_hwt.pop().unwrap();
                 match job {
                     HwJob {wait_evt: WaitKind::Time(t), waker: w} => {
                         // increase the inflight number and local counter
@@ -206,12 +215,8 @@ pub struct HwTask {
 impl HwTask {
     pub fn new(name: String, kind: WaitKind, tx: Sender<HwJob>) -> Self {
         // Considered the task as inflight at the beginning
-        let br = TickKeeper::global().inflight_hwt.load(Ordering::SeqCst);
         let inflight = TickKeeper::global().inflight_hwt.fetch_add(1, Ordering::SeqCst);
-        let rb = TickKeeper::global().inflight_hwt.load(Ordering::SeqCst);
-
-        println!("{}: Debug inflight counter@{:p} {}::{}::{}", cur_tick(), &TickKeeper::global().inflight_hwt, br, inflight, rb);
-        println!("{}: Create HwTask {}[{:?}] => inflight {}", cur_tick(), name, kind, inflight);
+        println!("{}: Create HwTask {}[{:?}]", cur_tick(), name, kind);
 
         HwTask {
             name: name,
@@ -264,17 +269,17 @@ impl<'p> Future for HwFuture<'p> {
         match &self.parent.kind {
             WaitKind::Time(t) => {
                 // Ready path
-                if ltick >= *t {
+                let next_tick = cur_tick() + *t;
+                if ltick >= next_tick {
                     Poll::Ready(())
                 } else {
                     let job = HwJob {
-                        wait_evt: WaitKind::Time(*t),
+                        wait_evt: WaitKind::Time(next_tick),
                         waker: cx.waker().clone(),
                     };
                     // Send the job and update inflight cnt
                     self.parent.hw_tx.send(job).unwrap();
                     let remaining_hwt = TickKeeper::global().inflight_hwt.fetch_sub(1, Ordering::SeqCst);
-                    // println!("",);
                     if 0 == remaining_hwt {
                         TickKeeper::global().scheduler_waker.take().unwrap().wake_by_ref();
                     }
