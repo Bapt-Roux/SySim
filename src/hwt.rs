@@ -8,102 +8,21 @@ use std::collections::HashMap;
 use std::sync::mpsc::sync_channel;
 
 
-#[derive(Debug)]
-pub enum WaitKind {
-    Time(usize),
-    Event(String),
-}
-
-#[derive(Debug)]
-pub struct HwFuture<'p> {
-    /// Reference to parent name for debug
-    name: &'p str,
-
-    /// Expected wakeup kind
-    kind: WaitKind,
-}
-
-impl<'p> HwFuture<'p> {
-    pub fn new(p: &'p str, k: WaitKind) -> Self {
-        HwFuture {
-            name: p,
-            kind: k,
-        }
-    }
-
-    async fn wait_for_tick(tick: usize) -> () {
-        todo!()
-    }
-
-
-    async fn wait_for_event(name: &str) -> () {
-        todo!()
-    }
-}
-
-impl<'p> Future for HwFuture<'p> {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>)
-        -> Poll<()>
-    {
-        println!("HwFuture polled");
-
-        match self.kind {
-            WaitKind::Time(t) => {
-                // Ready path
-                if cur_tick() >= t {
-                    Poll::Ready(())
-                } else {
-                    cx.waker().wake_by_ref();
-                    Poll::Pending
-                }
-            },
-            // WaitKind::Event(n) => {
-            // },
-            _ => { panic!("Unknown kind"); }
-        }
-    }
-}
-
-
-#[derive(Debug)]
-pub struct HwTask {
-    name: String,
-    period: usize,
-}
-
-impl HwTask
-{
-    fn new(n: &str, p: usize) -> Self {
-        HwTask{
-            name: String::from(n),
-            period: p,
-        }
-    }
-
-    async fn run(self: &mut Self) -> ()
-    {
-        let mut done = false;
-        while !done {
-            println!("I'm a {} cycles period hw task", self.period);
-            HwFuture::new(&self.name, WaitKind::Time(self.period)).await;
-        }
-        panic!("This stmt shouldn't be reach");
-    }
-}
-
+// Implement the Tick Keeper struct
+// Handle the simulation time and expose a simulate functtion
+// Warn: This struct is instanciated once and made global with once_cell
 #[derive(Debug)]
 pub struct TickKeeper {
     /// Current simulated cycle
     tick: AtomicUsize,
-    end_tick: usize,
 
     /// Number of tick per second
     timescale: usize,
 
-    // HashMap to store the HwTask
-    tasks: HashMap<String, HwTask>,
+    // Communication HwTask and counter for number of inflight task
+    nb_hwt: u64,
+    pdg_hwt: u64,
+    rx: Receiver<(usize, &Waker)>, // todo
 }
 static TICK_KEEPER: OnceCell<TickKeeper> = OnceCell::new();
 

@@ -1,5 +1,7 @@
 
 use structopt::StructOpt;
+use rand::Rng;
+
 pub mod hwt;
 
 /// Define CLI arguments
@@ -9,7 +11,6 @@ struct Opt {
     /// Number of coworker to generate
     #[structopt(short)]
     coworker: u32,
-
 
     /// Starting simulation tick
     #[structopt(long)]
@@ -28,14 +29,16 @@ async fn main() {
     // Create and register the global TickKeeper
     let tk = hwt::TickKeeper::new(opt.tick, opt.timescale);
     hwt::register(tk);
-    // use `TickKeeper::global()` from now on
 
-    // Register two tasks
-    let p10 = hwt::HwTask("p10", 10);
-    TickKeeper::global().register_hwt("p10", p10);
-    let p20 = hwt::HwTask("p20", 20);
-    TickKeeper::global().register_hwt("p20", p20);
+    // Register tasks with random period
+    // let mut rng = rand::thread_rng();
+    // let tasks: Vec<hwt::HwTask>;
+    // for t in 0..opt.coworker {
+    //     let p = rng.gen_range(1..200);
+    //     tasks.push(hwt::HwTask(format!("HwTask_P{}", p), p));
+    //     tk.add_hwt();
+    // }
 
     // Start simulation loop for 400 cycles
-    TickKeeper::global().simulate(400);
+    // TickKeeper::global().simulate(400);
 }
